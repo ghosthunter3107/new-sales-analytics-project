@@ -29,11 +29,24 @@ try:
 except (OSError, PermissionError):
     pass
 
-try:
-    if app.static_folder:
-        os.makedirs(os.path.join(app.static_folder, 'charts'), exist_ok=True)
-except (OSError, PermissionError):
-    pass
+import traceback
+
+class ErrorReportingMiddleware:
+    """Catches any unhandled serverless exceptions and displays the exact traceback."""
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        try:
+            return self.wsgi_app(environ, start_response)
+        except Exception:
+            tb = traceback.format_exc()
+            print(f"[FATAL SERVERLESS ERROR]: {tb}")
+            response_headers = [('Content-Type', 'text/plain; charset=utf-8')]
+            start_response('500 Internal Server Error', response_headers)
+            return [f"Serverless Runtime Error:\n\n{tb}".encode('utf-8')]
+
+app.wsgi_app = ErrorReportingMiddleware(app.wsgi_app)
 
 # In-memory storage for pending CSV imports per session
 # Format: session_token -> report
