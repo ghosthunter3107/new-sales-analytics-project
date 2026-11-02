@@ -1,4 +1,5 @@
 import os
+import shutil
 import sqlite3
 import pymysql
 import pymysql.cursors
@@ -20,21 +21,49 @@ def get_db_error_message():
 
 def get_mysql_connection(select_db=True):
     """Establishes connection to MySQL server using credentials from Config."""
-    conn = pymysql.connect(
-        host=Config.DB_HOST,
-        port=Config.DB_PORT,
-        user=Config.DB_USER,
-        password=Config.DB_PASSWORD,
-        database=Config.DB_NAME if select_db else None,
-        charset='utf8mb4',
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True
+    connect_kwargs = {
+        'host': Config.DB_HOST,
+        'port': Config.DB_PORT,
+        'user': Config.DB_USER,
+        'password': Config.DB_PASSWORD,
+        'database': Config.DB_NAME if select_db else None,
+        'charset': 'utf8mb4',
+        'cursorclass': pymysql.cursors.DictCursor,
+        'autocommit': True,
+        'connect_timeout': 10
+    }
+    if getattr(Config, 'DB_SSL', False):
+        connect_kwargs['ssl'] = {'ssl_mode': 'REQUIRED'}
+    return pymysql.connect(**connect_kwargs)
+
+def get_sqlite_db_path():
+    """Returns SQLite database path, copying to /tmp in serverless/read-only environments (e.g. Vercel)."""
+    if os.getenv('SQLITE_DB_PATH'):
+        return os.getenv('SQLITE_DB_PATH')
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    orig_db = os.path.join(base_dir, 'sales_data.db')
+
+    is_serverless = bool(
+        os.getenv('VERCEL') or
+        os.getenv('AWS_LAMBDA_FUNCTION_NAME') or
+        not os.access(base_dir, os.W_OK)
     )
-    return conn
+
+    if is_serverless:
+        tmp_db = os.path.join('/tmp', 'sales_data.db')
+        if not os.path.exists(tmp_db) and os.path.exists(orig_db):
+            try:
+                shutil.copy2(orig_db, tmp_db)
+            except Exception as e:
+                print(f"[Database] Notice: Could not copy sales_data.db to /tmp: {e}")
+        return tmp_db
+
+    return orig_db
 
 def get_sqlite_connection():
     """Fallback SQLite database connection."""
-    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sales_data.db')
+    db_path = get_sqlite_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -53,21 +82,46 @@ def init_db():
 
     target_type = Config.DB_TYPE.lower()
 
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    is_serverless = bool(
+        os.getenv('VERCEL') or
+        os.getenv('AWS_LAMBDA_FUNCTION_NAME') or
+        not os.access(base_dir, os.W_OK)
+    )
+
+    # In serverless without remote MySQL host configured, skip connecting to localhost to avoid connection timeouts
+    has_remote_mysql = bool(
+        os.getenv('DATABASE_URL') or
+        os.getenv('MYSQL_URL') or
+        (Config.DB_HOST and Config.DB_HOST.lower() not in ('localhost', '127.0.0.1'))
+    )
+
+    if is_serverless and not has_remote_mysql and target_type == 'auto':
+        target_type = 'sqlite'
+
     # Attempt MySQL first if requested or auto
     if target_type in ('mysql', 'auto'):
         try:
             # Connect to MySQL server without selecting database first to create it
-            server_conn = pymysql.connect(
-                host=Config.DB_HOST,
-                port=Config.DB_PORT,
-                user=Config.DB_USER,
-                password=Config.DB_PASSWORD,
-                charset='utf8mb4',
-                autocommit=True
-            )
-            with server_conn.cursor() as cursor:
-                cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{Config.DB_NAME}` CHARACTER SET utf8mb4;")
-            server_conn.close()
+            server_kwargs = {
+                'host': Config.DB_HOST,
+                'port': Config.DB_PORT,
+                'user': Config.DB_USER,
+                'password': Config.DB_PASSWORD,
+                'charset': 'utf8mb4',
+                'autocommit': True,
+                'connect_timeout': 10
+            }
+            if getattr(Config, 'DB_SSL', False):
+                server_kwargs['ssl'] = {'ssl_mode': 'REQUIRED'}
+            try:
+                server_conn = pymysql.connect(**server_kwargs)
+                with server_conn.cursor() as cursor:
+                    cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{Config.DB_NAME}` CHARACTER SET utf8mb4;")
+                server_conn.close()
+            except Exception as s_err:
+                # Cloud MySQL instances often restrict CREATE DATABASE; continue if database already exists
+                print(f"[Database] Notice on CREATE DATABASE: {s_err}")
 
             # Now connect to the database and create tables
             conn = get_mysql_connection(select_db=True)

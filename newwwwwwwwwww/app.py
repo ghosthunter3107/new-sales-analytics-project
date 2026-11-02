@@ -14,12 +14,26 @@ import database
 import analytics
 import csv_validator
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'templates'),
+    static_folder=os.path.join(BASE_DIR, 'static')
+)
 app.config.from_object(Config)
 
-# Ensure upload and chart directories exist
-os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(os.path.join(app.static_folder, 'charts'), exist_ok=True)
+# Ensure upload and chart directories exist safely without failing on read-only serverless filesystems
+try:
+    os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
+except (OSError, PermissionError):
+    pass
+
+try:
+    if app.static_folder:
+        os.makedirs(os.path.join(app.static_folder, 'charts'), exist_ok=True)
+except (OSError, PermissionError):
+    pass
 
 # In-memory storage for pending CSV imports per session
 # Format: session_token -> report
@@ -388,6 +402,7 @@ def import_csv():
             return redirect(request.url)
 
         # Save uploaded file
+        os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
         filename = secure_filename(f"upload_{session.get('user_id')}_{file.filename}")
         file_path = os.path.join(Config.UPLOAD_FOLDER, filename)
         file.save(file_path)
@@ -480,7 +495,7 @@ def download_sample_csv(filename='sample_sales.csv'):
         'test_with_errors.csv': 'test_with_errors.csv'
     }
     safe_name = allowed_files.get(filename, 'sample_sales.csv')
-    sample_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', safe_name)
+    sample_path = os.path.join(BASE_DIR, 'data', safe_name)
     return send_file(sample_path, as_attachment=True, download_name=safe_name, mimetype='text/csv')
 
 # ----------------- Analysis Pages -----------------

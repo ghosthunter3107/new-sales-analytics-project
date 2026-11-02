@@ -1,9 +1,6 @@
 import os
 import pandas as pd
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')  # Headless backend for web server
-import matplotlib.pyplot as plt
 import database
 
 def get_kpis_and_analytics(df=None):
@@ -195,12 +192,30 @@ def get_kpis_and_analytics(df=None):
         'region_ranking': region_ranking
     }
 
-def generate_matplotlib_charts(output_dir='static/charts'):
+def generate_matplotlib_charts(output_dir=None):
     """
-    Generates Matplotlib charts and saves them as PNG files in static/charts/.
+    Generates Matplotlib charts and saves them as PNG files.
     Satisfies curriculum requirement for Matplotlib chart generation.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    try:
+        os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib')
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"[Analytics] Matplotlib import unavailable: {e}")
+        return {}
+    if output_dir is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        if os.getenv('VERCEL') or not os.access(base_dir, os.W_OK):
+            output_dir = os.path.join('/tmp', 'charts')
+        else:
+            output_dir = os.path.join(base_dir, 'static', 'charts')
+
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except (OSError, PermissionError):
+        pass
     df = database.get_sales_dataframe()
     if df.empty:
         return {}

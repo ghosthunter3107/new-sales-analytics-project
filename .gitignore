@@ -1,0 +1,10 @@
+.env
+.env.local
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.vercel
+static/uploads/*
+!static/uploads/.gitkeep

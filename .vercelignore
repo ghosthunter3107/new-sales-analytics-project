@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.local
+.git
+.github
+.pytest_cache/
+test_app.py
+static/uploads/*
